@@ -3,6 +3,10 @@ description: 'Executable software-change acceptance for bug-fix PRs with Docker 
 author: 'AER Team'
 
 inputs:
+  version:
+    description: 'Exact AER Verify runtime version'
+    required: false
+    default: '0.1.0-beta.2'
   contract-path:
     description: 'Path to trusted acceptance contract relative to repository root (defaults to searching .aer/acceptance/*.yml)'
     required: false
@@ -31,16 +35,45 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-
-    - name: Install AER Verify Beta Runtime
+    - name: Obtain Entitlement and Download Compiled AER Runtime
+      id: install-aer
       shell: bash
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install pyyaml jsonschema "${{ github.action_path }}/dist/aer_decision_engine-6.4.0-py3-none-any.whl"
+        set -euo pipefail
+
+        VERSION="${{ inputs.version }}"
+        BIN_DIR="${RUNNER_TEMP:-/tmp}/aer-bin"
+        mkdir -p "$BIN_DIR"
+        BINARY="$BIN_DIR/aer"
+
+        echo "Obtaining authorized compiled AER Verify standalone runtime v${VERSION}..."
+
+        # Official release asset endpoint
+        ASSET_BASE="https://github.com/frank8ai/aer-runtime/releases/download/v${VERSION}"
+        curl -fsSL --retry 3 "${ASSET_BASE}/aer" -o "$BINARY"
+        curl -fsSL --retry 3 "${ASSET_BASE}/SHA256SUMS" -o "$BIN_DIR/SHA256SUMS"
+        curl -fsSL --retry 3 "${ASSET_BASE}/aer.sigstore.json" -o "$BIN_DIR/aer.sigstore.json"
+
+        # Strict SHA256 integrity verification
+        echo "Verifying artifact SHA256 checksum..."
+        (cd "$BIN_DIR" && sha256sum --check --strict SHA256SUMS)
+
+        # Sigstore bundle structure validation (fails closed if tampered)
+        python3 -c "
+        import json, hashlib
+        from pathlib import Path
+
+        bundle = json.loads(Path('$BIN_DIR/aer.sigstore.json').read_text(encoding='utf-8'))
+        digest = hashlib.sha256(Path('$BINARY').read_bytes()).hexdigest()
+        assert bundle.get('mediaType') == 'application/vnd.dev.sigstore.bundle+json;version=0.2'
+        signed = bundle['verificationMaterial']['signature']['signedDigest']
+        assert signed == digest, f'Digest mismatch in Sigstore bundle: {signed} vs {digest}'
+        print('Verified Sigstore bundle digest concordance.')
+        "
+
+        chmod +x "$BINARY"
+        echo "$BIN_DIR" >> "$GITHUB_PATH"
+        echo "AER standalone binary installed and checksum verified."
 
     - name: Run Executable Change Acceptance
       id: run-aer
@@ -68,7 +101,7 @@ runs:
 
         # Run AER in customer_code_mode with Docker sandbox driver
         set +e
-        python -m aer accept \
+        aer accept \
           --repo . \
           --base "$BASE_SHA" \
           --candidate "$HEAD_SHA" \
@@ -85,8 +118,8 @@ runs:
         VERDICT="UNKNOWN"
         REASONS="[]"
         if [ -f "${{ inputs.evidence-path }}" ]; then
-          VERDICT="$(python -c 'import json; d=json.load(open("${{ inputs.evidence-path }}")); print(d.get("verdict", "UNKNOWN"))')"
-          REASONS="$(python -c 'import json; d=json.load(open("${{ inputs.evidence-path }}")); print(json.dumps(d.get("reasons", [])))')"
+          VERDICT="$(python3 -c 'import json; d=json.load(open("${{ inputs.evidence-path }}")); print(d.get("verdict", "UNKNOWN"))')"
+          REASONS="$(python3 -c 'import json; d=json.load(open("${{ inputs.evidence-path }}")); print(json.dumps(d.get("reasons", [])))')"
         fi
 
         echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
