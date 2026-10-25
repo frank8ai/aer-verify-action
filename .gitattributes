@@ -1,0 +1,11 @@
+# This repository ships executable judges, and they are mirrored byte-for-byte
+# from the engine repository (frank8ai/aer-runtime, action/validate_evidence.py).
+# The only practical way to check that the mirror has not drifted is to compare
+# git blob SHAs, which is a byte comparison -- so a checkout that rewrites CRLF
+# makes an in-sync copy look drifted, and makes a real drift indistinguishable
+# from a line-ending artefact. Pin every text file to LF.
+* text=auto eol=lf
+
+# Windows batch files must keep CRLF if any are ever added.
+*.bat text eol=crlf
+*.cmd text eol=crlf
