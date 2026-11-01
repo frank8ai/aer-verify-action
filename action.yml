@@ -58,7 +58,7 @@ runs:
 
         echo "Downloading AER Verify standalone runtime ${TAG}..."
 
-        REPO="frank8ai/aer-runtime"
+        REPO="frank8ai/aer-verify-action"
         DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
         if command -v gh >/dev/null 2>&1; then
