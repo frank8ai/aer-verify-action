@@ -6,7 +6,7 @@ inputs:
   version:
     description: 'Exact AER Verify runtime version release tag with published assets'
     required: false
-    default: 'v0.2.2-rc.1'
+    default: 'v0.2.2-rc.2'
   contract-path:
     description: 'Path to trusted acceptance contract relative to repository root (defaults to searching .aer/acceptance/*.yml)'
     required: false
