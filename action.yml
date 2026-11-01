@@ -134,24 +134,12 @@ runs:
         fi
 
         if [ "$IS_ONBOARDING" -eq 1 ]; then
-          cat <<EOF > "$EVIDENCE"
-{
-  "schemaVersion": "change-acceptance/v1",
-  "verdict": "PASS",
-  "reasons": [
-    "AER_ONBOARDING_INITIAL_CONTRACT_DEPLOYMENT: base commit does not yet contain trusted contract; initial onboarding verified."
-  ],
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "repository": "${GITHUB_REPOSITORY:-unknown}",
-  "baseline": {"sha": "${BASE_SHA}"},
-  "candidate": {"sha": "${HEAD_SHA}"}
-}
-EOF
-          cat <<EOF > "$BRIEF"
-# AER Verify Acceptance Brief
-**Verdict**: PASS (Initial Repository Onboarding)
-**Reasons**: Base commit does not yet contain trusted contract; initial onboarding contract introduced cleanly on candidate.
-EOF
+          python3 -c "import json, datetime, sys; ev = {'schemaVersion': 'change-acceptance/v1', 'verdict': 'PASS', 'reasons': ['AER_ONBOARDING_INITIAL_CONTRACT_DEPLOYMENT: base commit does not yet contain trusted contract; initial onboarding verified.'], 'timestamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'repository': sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else 'unknown', 'baseline': {'sha': sys.argv[2]}, 'candidate': {'sha': sys.argv[3]}}; open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(ev, indent=2))" "$EVIDENCE" "$BASE_SHA" "$HEAD_SHA" "${GITHUB_REPOSITORY:-unknown}"
+          {
+            echo "# AER Verify Acceptance Brief"
+            echo "**Verdict**: PASS (Initial Repository Onboarding)"
+            echo "**Reasons**: Base commit does not yet contain trusted contract; initial onboarding contract introduced cleanly on candidate."
+          } > "$BRIEF"
           EXIT_CODE=0
         else
           # Run AER in customer_code_mode with Docker sandbox driver
