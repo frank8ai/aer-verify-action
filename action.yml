@@ -23,6 +23,10 @@ inputs:
     description: 'Output path for Markdown Acceptance Brief'
     required: false
     default: 'artifacts/aer/acceptance-brief.md'
+  onboarding:
+    description: 'Explicitly mark this run as an onboarding/bootstrap run to bypass defect reproduction requirements'
+    required: false
+    default: 'false'
 
 outputs:
   verdict:
@@ -126,6 +130,11 @@ runs:
         fi
 
         IS_ONBOARDING=0
+        if [ "${{ inputs.onboarding }}" = "true" ]; then
+          IS_ONBOARDING=1
+          echo "Explicit onboarding mode enabled via inputs.onboarding=true."
+        fi
+
         if [ -n "$BASE_SHA" ] && ! git cat-file -e "${BASE_SHA}:${CONTRACT_FILE}" 2>/dev/null; then
           if git cat-file -e "${HEAD_SHA}:${CONTRACT_FILE}" 2>/dev/null; then
             IS_ONBOARDING=1
