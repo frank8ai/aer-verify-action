@@ -13,6 +13,7 @@ crashes, and the check used to go green anyway.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -201,6 +202,23 @@ class ActionWiringTest(unittest.TestCase):
 
     def test_does_not_branch_on_verdict_string(self) -> None:
         self.assertNotIn('if [ "$VERDICT" = "PASS" ]', self.action)
+
+    def test_strict_mode_enabled_in_all_steps(self) -> None:
+        """m-1: Ensure set -euo pipefail is enabled in runner steps."""
+        self.assertIn("set -euo pipefail", self.action)
+
+    def test_onboarding_branch_sets_unknown_verdict(self) -> None:
+        """B-1: Onboarding synthetic verdict must be UNKNOWN, not PASS."""
+        run_block = self.action.split("Run Executable Change Acceptance", 1)[1]
+        self.assertIn("'verdict': 'UNKNOWN'", run_block)
+        self.assertNotIn("'verdict': 'PASS'", run_block)
+
+    def test_default_version_follows_valid_release_tag_format(self) -> None:
+        """M-4: Version default in action.yml must be a valid release tag."""
+        match = re.search(r"version:\s+.*?\s+default:\s+'([^']+)'", self.action, re.DOTALL)
+        self.assertIsNotNone(match, "version default not found")
+        version = match.group(1)
+        self.assertTrue(re.match(r"^v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$", version), f"Invalid version tag format: {version}")
 
 
 if __name__ == "__main__":
