@@ -42,10 +42,19 @@ runs:
     - name: Download the compiled AER runtime
       id: install-aer
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
 
-        VERSION="${{ inputs.version }}"
+        OS="$(uname -s)"
+        ARCH="$(uname -m)"
+        if [ "$OS" != "Linux" ] || [ "$ARCH" != "x86_64" ]; then
+          echo "::error::AER Verify binary distribution currently only supports Linux x86_64. Detected: ${OS}-${ARCH}."
+          exit 1
+        fi
+
+        VERSION="$INPUT_VERSION"
         TAG="${VERSION}"
         if [[ ! "${TAG}" =~ ^v ]]; then
           TAG="v${TAG}"
@@ -93,16 +102,33 @@ runs:
     - name: Run Executable Change Acceptance
       id: run-aer
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_CONTRACT_PATH: ${{ inputs.contract-path }}
+        INPUT_DOCKER_IMAGE: ${{ inputs.docker-image }}
+        INPUT_EVIDENCE_PATH: ${{ inputs.evidence-path }}
+        INPUT_BRIEF_PATH: ${{ inputs.brief-path }}
+        INPUT_ONBOARDING: ${{ inputs.onboarding }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
-        set -uo pipefail
+        set -euo pipefail
 
-        EVIDENCE="${{ inputs.evidence-path }}"
-        BRIEF="${{ inputs.brief-path }}"
+        OS="$(uname -s)"
+        ARCH="$(uname -m)"
+        if [ "$OS" != "Linux" ] || [ "$ARCH" != "x86_64" ]; then
+          echo "::error::AER Verify binary distribution currently only supports Linux x86_64. Detected: ${OS}-${ARCH}."
+          exit 1
+        fi
+
+        EVIDENCE="$INPUT_EVIDENCE_PATH"
+        BRIEF="$INPUT_BRIEF_PATH"
         mkdir -p "$(dirname "$EVIDENCE")" "$(dirname "$BRIEF")"
 
         # Resolve exact base and head SHAs
-        BASE_SHA="${{ github.event.pull_request.base.sha }}"
-        HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+        BASE_SHA="$PR_BASE_SHA"
+        HEAD_SHA="$PR_HEAD_SHA"
         if [ -z "$BASE_SHA" ]; then
           BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || echo "")"
         fi
@@ -118,19 +144,19 @@ runs:
         # run so only evidence produced by THIS execution can be read.
         rm -f "$EVIDENCE" "$BRIEF"
 
-        CONTRACT_FLAG=""
-        if [ -n "${{ inputs.contract-path }}" ]; then
-          CONTRACT_FLAG="--contract-path ${{ inputs.contract-path }}"
+        CONTRACT_ARGS=()
+        if [ -n "$INPUT_CONTRACT_PATH" ]; then
+          CONTRACT_ARGS=(--contract-path "$INPUT_CONTRACT_PATH")
         fi
 
         # Check for Initial Repository Onboarding (contract absent on base but introduced on candidate)
-        CONTRACT_FILE="${{ inputs.contract-path }}"
+        CONTRACT_FILE="$INPUT_CONTRACT_PATH"
         if [ -z "$CONTRACT_FILE" ]; then
           CONTRACT_FILE=".aer/acceptance/default.yml"
         fi
 
         IS_ONBOARDING=0
-        if [ "${{ inputs.onboarding }}" = "true" ]; then
+        if [ "$INPUT_ONBOARDING" = "true" ]; then
           IS_ONBOARDING=1
           echo "Explicit onboarding mode enabled via inputs.onboarding=true."
         fi
@@ -143,11 +169,11 @@ runs:
         fi
 
         if [ "$IS_ONBOARDING" -eq 1 ]; then
-          python3 -c "import json, datetime, sys; ev = {'schemaVersion': 'change-acceptance/v1', 'verdict': 'PASS', 'reasons': ['AER_ONBOARDING_INITIAL_CONTRACT_DEPLOYMENT: base commit does not yet contain trusted contract; initial onboarding verified.'], 'timestamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'repository': sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else 'unknown', 'baseline': {'sha': sys.argv[2]}, 'candidate': {'sha': sys.argv[3]}}; open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(ev, indent=2))" "$EVIDENCE" "$BASE_SHA" "$HEAD_SHA" "${GITHUB_REPOSITORY:-unknown}"
+          python3 -c "import json, datetime, sys; ev = {'schemaVersion': 'change-acceptance/v1', 'verdict': 'UNKNOWN', 'reasons': ['AER_ONBOARDING_INITIAL_CONTRACT_DEPLOYMENT: base commit does not contain trusted contract; manual review or initial contract baseline required.'], 'timestamp': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'repository': sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else 'unknown', 'baseline': {'sha': sys.argv[2]}, 'candidate': {'sha': sys.argv[3]}}; open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(ev, indent=2))" "$EVIDENCE" "$BASE_SHA" "$HEAD_SHA" "${GITHUB_REPOSITORY:-unknown}"
           {
             echo "# AER Verify Acceptance Brief"
-            echo "**Verdict**: PASS (Initial Repository Onboarding)"
-            echo "**Reasons**: Base commit does not yet contain trusted contract; initial onboarding contract introduced cleanly on candidate."
+            echo "**Verdict**: UNKNOWN (Initial Repository Onboarding - Verification Inconclusive)"
+            echo "**Reasons**: Base commit does not contain trusted contract; manual review or initial contract baseline required."
           } > "$BRIEF"
           EXIT_CODE=0
         else
@@ -157,10 +183,10 @@ runs:
             --repo . \
             --base "$BASE_SHA" \
             --candidate "$HEAD_SHA" \
-            $CONTRACT_FLAG \
+            "${CONTRACT_ARGS[@]}" \
             --sandbox-driver docker \
             --customer-code \
-            --docker-image "${{ inputs.docker-image }}" \
+            --docker-image "$INPUT_DOCKER_IMAGE" \
             --output "$EVIDENCE" \
             --brief "$BRIEF"
           EXIT_CODE=$?
@@ -168,20 +194,20 @@ runs:
         fi
 
         # Publish the brief even when the run failed, so a human can see why.
-        if [ -f "$BRIEF" ]; then
-          cat "$BRIEF" >> "$GITHUB_STEP_SUMMARY"
+        if [ -f "$BRIEF" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          cat "$BRIEF" >> "${GITHUB_STEP_SUMMARY}"
         fi
 
         # The exit code of `aer accept` is authoritative, and the evidence
         # document must bind to the exact (base, candidate) pair under review.
         # Both conditions live in a unit-tested helper rather than inline shell.
         set +e
-        python3 "${{ github.action_path }}/validate_evidence.py" \
+        python3 "$ACTION_PATH/validate_evidence.py" \
           --evidence "$EVIDENCE" \
           --exit-code "$EXIT_CODE" \
           --base-sha "$BASE_SHA" \
           --head-sha "$HEAD_SHA" \
-          --github-output "$GITHUB_OUTPUT"
+          --github-output "${GITHUB_OUTPUT:-}"
         ADMISSIBILITY_EXIT=$?
         set -e
 
